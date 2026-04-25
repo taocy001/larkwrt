@@ -560,14 +560,21 @@ func hr() CardElement {
 }
 
 func actions(btns []map[string]any) CardElement {
-	acts := make([]any, len(btns))
+	cols := make([]any, len(btns))
 	for i, b := range btns {
-		acts[i] = b
+		cols[i] = map[string]any{
+			"tag":            "column",
+			"width":          "weighted",
+			"weight":         1,
+			"vertical_align": "center",
+			"elements":       []any{b},
+		}
 	}
 	return CardElement{
-		"tag":     "action",
-		"layout":  "flow",
-		"actions": acts,
+		"tag":                "column_set",
+		"flex_mode":          "none",
+		"horizontal_spacing": "8px",
+		"columns":            cols,
 	}
 }
 
