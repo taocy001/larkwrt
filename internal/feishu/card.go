@@ -566,6 +566,7 @@ func actions(btns []map[string]any) CardElement {
 	}
 	return CardElement{
 		"tag":     "action",
+		"layout":  "flow",
 		"actions": acts,
 	}
 }
