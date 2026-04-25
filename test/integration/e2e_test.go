@@ -44,7 +44,7 @@ func setupTest(t *testing.T) (*MockFeishu, *feishu.Client, *feishu.WSClient, *co
 
 func makeTestCollector() *collector.Collector {
 	bus := events.NewBus(0)
-	return collector.New(5*time.Second, 30*time.Second, bus, "br-lan", nil)
+	return collector.New(5*time.Second, 30*time.Second, bus, "br-lan", nil, nil)
 }
 
 // ── TC-01: Status card push on WS event ──────────────────────────────────────

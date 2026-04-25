@@ -57,6 +57,7 @@ func main() {
 		bus,
 		cfg.Router.LanIface,
 		devDB,
+		cfg.Monitor.WatchedServices,
 	)
 	shell := executor.New(cfg.Security.ExecWhitelist)
 	client := feishu.NewClient(cfg.Feishu.AppID, cfg.Feishu.AppSecret, cfg.Feishu.ChatID, "")

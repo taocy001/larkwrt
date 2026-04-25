@@ -12,6 +12,160 @@ import (
 	"larkwrt/internal/events"
 )
 
+// ── Plugin display types (populated by commands/plugin.go) ───────────────────
+
+// PluginEntry is display data for one installed plugin shown in the list card.
+type PluginEntry struct {
+	Name      string
+	TypeLabel string // "sing-box (API)" | "通用"
+	HasStatus bool
+	HasConfig bool
+	HasReload bool
+}
+
+// SingBoxDisplay holds data rendered in the sing-box status card.
+type SingBoxDisplay struct {
+	Version     string
+	Groups      []SingBoxGroup
+	Connections int
+	UpBytes     int64
+	DownBytes   int64
+}
+
+// SingBoxGroup is one Selector proxy group.
+type SingBoxGroup struct {
+	Name    string
+	Current string
+	Count   int
+}
+
+// PluginStatRow is one labelled metric row for generic plugin cards.
+type PluginStatRow struct {
+	Label string
+	Value string
+}
+
+// ── Package list card ─────────────────────────────────────────────────────────
+
+func BuildPackageListCard(routerName, opkgOut, filter string) *Card {
+	type pkg struct {
+		Name    string
+		Version string
+	}
+	var pkgs []pkg
+	for _, line := range strings.Split(strings.TrimSpace(opkgOut), "\n") {
+		if line == "" {
+			continue
+		}
+		// opkg format: "package_name - version - description"
+		parts := strings.SplitN(line, " - ", 3)
+		name := strings.TrimSpace(parts[0])
+		version := ""
+		if len(parts) >= 2 {
+			version = strings.TrimSpace(parts[1])
+		}
+		if filter != "" && !strings.Contains(strings.ToLower(name), filter) {
+			continue
+		}
+		pkgs = append(pkgs, pkg{name, version})
+	}
+
+	title := fmt.Sprintf("📦 %s · 已安装包 (%d)", routerName, len(pkgs))
+	if filter != "" {
+		title = fmt.Sprintf("📦 %s · 已安装包 · 筛选: %s (%d)", routerName, filter, len(pkgs))
+	}
+
+	cols := []tableCol{
+		{Name: "name",    DisplayName: "包名", DataType: "text", Width: "auto"},
+		{Name: "version", DisplayName: "版本", DataType: "text", Width: "auto"},
+	}
+	var rows []map[string]string
+	for _, p := range pkgs {
+		rows = append(rows, map[string]string{"name": p.Name, "version": p.Version})
+	}
+
+	var elems []CardElement
+	if len(rows) == 0 {
+		msg := "opkg 返回空结果"
+		if filter != "" {
+			msg = fmt.Sprintf("未找到匹配 \"%s\" 的包", filter)
+		}
+		elems = append(elems, div(msg))
+	} else {
+		elems = append(elems, tableElement(cols, rows))
+	}
+	return &Card{
+		Schema: "2.0",
+		Config: CardConfig{WideScreenMode: true},
+		Header: &CardHeader{
+			Title:    TextObject{Tag: "plain_text", Content: title},
+			Template: "blue",
+		},
+		Body: CardBody{Elements: elems},
+	}
+}
+
+// ── Service list card ─────────────────────────────────────────────────────────
+
+// BuildServiceListCard shows /etc/init.d/ services and their autostart (rc.d) status.
+func BuildServiceListCard(routerName, initdOut, rcdOut string) *Card {
+	// collect service names from init.d
+	autostart := make(map[string]bool)
+	for _, name := range strings.Fields(initdOut) {
+		if name == "README" {
+			continue
+		}
+		autostart[name] = false
+	}
+
+	// mark autostart-enabled from rc.d (S<priority><name> entries)
+	for _, entry := range strings.Fields(rcdOut) {
+		if len(entry) < 2 || entry[0] != 'S' {
+			continue
+		}
+		// strip leading 'S' and any numeric priority digits
+		name := strings.TrimLeft(entry[1:], "0123456789")
+		if _, ok := autostart[name]; ok {
+			autostart[name] = true
+		}
+	}
+
+	var names []string
+	for name := range autostart {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	cols := []tableCol{
+		{Name: "name",     DisplayName: "服务名",  DataType: "text", Width: "auto"},
+		{Name: "autostart", DisplayName: "自启动", DataType: "text", Width: "auto"},
+	}
+	var rows []map[string]string
+	for _, name := range names {
+		enabled := "✗"
+		if autostart[name] {
+			enabled = "✓"
+		}
+		rows = append(rows, map[string]string{"name": name, "autostart": enabled})
+	}
+
+	var elems []CardElement
+	if len(rows) == 0 {
+		elems = append(elems, div("未找到服务（/etc/init.d/ 为空）"))
+	} else {
+		elems = append(elems, tableElement(cols, rows))
+	}
+	return &Card{
+		Schema: "2.0",
+		Config: CardConfig{WideScreenMode: true},
+		Header: &CardHeader{
+			Title:    TextObject{Tag: "plain_text", Content: fmt.Sprintf("🔧 %s · 服务列表 (%d)", routerName, len(rows))},
+			Template: "blue",
+		},
+		Body: CardBody{Elements: elems},
+	}
+}
+
 // ── Status card ───────────────────────────────────────────────────────────────
 
 func BuildStatusCard(routerName string, snap collector.Snapshot) *Card {
@@ -187,6 +341,18 @@ func BuildAlertCard(routerName string, ev events.Event) *Card {
 	case events.EvRebootDetected:
 		title = "✅ 路由已重启"
 		body = "检测到路由器重启完成"
+		template = "green"
+
+	case events.EvServiceDown:
+		p := ev.Payload.(events.ServicePayload)
+		title = "🔴 服务宕机"
+		body = fmt.Sprintf("服务 **%s** 已停止运行", p.Name)
+		template = "red"
+
+	case events.EvServiceUp:
+		p := ev.Payload.(events.ServicePayload)
+		title = "✅ 服务恢复"
+		body = fmt.Sprintf("服务 **%s** 已恢复运行", p.Name)
 		template = "green"
 
 	default:
@@ -394,15 +560,13 @@ func hr() CardElement {
 }
 
 func actions(btns []map[string]any) CardElement {
-	elems := make([]any, len(btns))
+	acts := make([]any, len(btns))
 	for i, b := range btns {
-		elems[i] = b
+		acts[i] = b
 	}
 	return CardElement{
-		"tag":                "interactive_container",
-		"direction":          "horizontal",
-		"horizontal_spacing": "medium",
-		"elements":           elems,
+		"tag":     "action",
+		"actions": acts,
 	}
 }
 
@@ -853,4 +1017,190 @@ func formatSizeKB(kb int) string {
 	default:
 		return fmt.Sprintf("%dK", kb)
 	}
+}
+
+// ── Plugin list card ──────────────────────────────────────────────────────────
+
+func BuildPluginListCard(routerName string, plugins []PluginEntry) *Card {
+	var elems []CardElement
+	if len(plugins) == 0 {
+		elems = append(elems, div("未检测到已安装的插件\n\n请在 config.toml 中配置 **[[plugins]]** 并设置 **detect** 路径"))
+	} else {
+		cols := []tableCol{
+			{Name: "name",   DisplayName: "插件名", DataType: "text", Width: "auto"},
+			{Name: "type",   DisplayName: "类型",   DataType: "text", Width: "auto"},
+			{Name: "status", DisplayName: "状态查询", DataType: "text", Width: "auto"},
+			{Name: "config", DisplayName: "配置文件", DataType: "text", Width: "auto"},
+			{Name: "reload", DisplayName: "重载",   DataType: "text", Width: "auto"},
+		}
+		var rows []map[string]string
+		for _, p := range plugins {
+			yn := func(b bool) string {
+				if b {
+					return "✓"
+				}
+				return "✗"
+			}
+			rows = append(rows, map[string]string{
+				"name":   p.Name,
+				"type":   p.TypeLabel,
+				"status": yn(p.HasStatus),
+				"config": yn(p.HasConfig),
+				"reload": yn(p.HasReload),
+			})
+		}
+		elems = append(elems, tableElement(cols, rows))
+		elems = append(elems, hr())
+		elems = append(elems, div("**查看状态:** /plugin status <名称>\n**查看配置:** /plugin config <名称>\n**重载插件:** /plugin reload <名称>\n**切换节点:** /plugin switch <名称> <代理组> <节点>"))
+	}
+	return &Card{
+		Schema: "2.0",
+		Config: CardConfig{WideScreenMode: true},
+		Header: &CardHeader{
+			Title:    TextObject{Tag: "plain_text", Content: fmt.Sprintf("🧩 %s · 已安装插件 (%d)", routerName, len(plugins))},
+			Template: "blue",
+		},
+		Body: CardBody{Elements: elems},
+	}
+}
+
+// ── sing-box status card ──────────────────────────────────────────────────────
+
+func BuildSingBoxCard(routerName, pluginName string, s SingBoxDisplay) *Card {
+	var elems []CardElement
+
+	// header stats line
+	statsLine := fmt.Sprintf(
+		"**版本** %s   **连接数** %d   **↑累计** %s   **↓累计** %s",
+		orNA(s.Version),
+		s.Connections,
+		formatBytes(s.UpBytes),
+		formatBytes(s.DownBytes),
+	)
+	elems = append(elems, div(statsLine))
+
+	if len(s.Groups) > 0 {
+		elems = append(elems, hr())
+		cols := []tableCol{
+			{Name: "group",   DisplayName: "代理组", DataType: "text", Width: "auto"},
+			{Name: "current", DisplayName: "当前节点", DataType: "text", Width: "auto"},
+			{Name: "count",   DisplayName: "节点数",  DataType: "text", Width: "auto"},
+		}
+		var rows []map[string]string
+		for _, g := range s.Groups {
+			rows = append(rows, map[string]string{
+				"group":   g.Name,
+				"current": g.Current,
+				"count":   fmt.Sprintf("%d", g.Count),
+			})
+		}
+		elems = append(elems, tableElement(cols, rows))
+		elems = append(elems, hr())
+		elems = append(elems, div("切换节点: **/plugin switch** "+pluginName+" **<代理组>** **<节点名>**"))
+	} else {
+		elems = append(elems, hr())
+		elems = append(elems, div("_未获取到代理组（检查 api_url 是否正确，或 sing-box 未运行）_"))
+	}
+
+	return &Card{
+		Schema: "2.0",
+		Config: CardConfig{WideScreenMode: true},
+		Header: &CardHeader{
+			Title:    TextObject{Tag: "plain_text", Content: fmt.Sprintf("🔀 %s · %s 代理状态", routerName, pluginName)},
+			Template: "blue",
+		},
+		Body: CardBody{Elements: elems},
+	}
+}
+
+// ── Generic plugin status card ────────────────────────────────────────────────
+
+func BuildGenericPluginCard(routerName, pluginName, statusOut string, statusErr error, stats []PluginStatRow) *Card {
+	var elems []CardElement
+
+	if statusErr != nil {
+		elems = append(elems, div(fmt.Sprintf("**状态查询失败:** %s", statusErr.Error())))
+	} else if statusOut != "" {
+		body := truncate(statusOut, 1500)
+		elems = append(elems, div("```\n"+body+"\n```"))
+	} else {
+		elems = append(elems, div("_未配置 status_cmd_"))
+	}
+
+	if len(stats) > 0 {
+		elems = append(elems, hr())
+		cols := []tableCol{
+			{Name: "label", DisplayName: "指标", DataType: "text", Width: "auto"},
+			{Name: "value", DisplayName: "值",   DataType: "text", Width: "auto"},
+		}
+		var rows []map[string]string
+		for _, s := range stats {
+			rows = append(rows, map[string]string{"label": s.Label, "value": s.Value})
+		}
+		elems = append(elems, tableElement(cols, rows))
+	}
+
+	tpl := "blue"
+	if statusErr != nil {
+		tpl = "red"
+	}
+	return &Card{
+		Schema: "2.0",
+		Config: CardConfig{WideScreenMode: true},
+		Header: &CardHeader{
+			Title:    TextObject{Tag: "plain_text", Content: fmt.Sprintf("🔧 %s · %s 状态", routerName, pluginName)},
+			Template: tpl,
+		},
+		Body: CardBody{Elements: elems},
+	}
+}
+
+// ── Plugin config file card ───────────────────────────────────────────────────
+
+func BuildPluginConfigCard(routerName, pluginName, filePath, content string) *Card {
+	body := truncate(content, 2000)
+	elems := []CardElement{
+		div(fmt.Sprintf("**文件路径:** `%s`", filePath)),
+		hr(),
+		div("```\n" + body + "\n```"),
+	}
+	if len([]rune(content)) > 2000 {
+		elems = append(elems, div("_（内容已截断，完整文件请直接查看路由器）_"))
+	}
+	return &Card{
+		Schema: "2.0",
+		Config: CardConfig{WideScreenMode: true},
+		Header: &CardHeader{
+			Title:    TextObject{Tag: "plain_text", Content: fmt.Sprintf("📄 %s · %s 配置", routerName, pluginName)},
+			Template: "blue",
+		},
+		Body: CardBody{Elements: elems},
+	}
+}
+
+// ── formatting helpers ────────────────────────────────────────────────────────
+
+func formatBytes(b int64) string {
+	const (
+		GB = 1 << 30
+		MB = 1 << 20
+		KB = 1 << 10
+	)
+	switch {
+	case b >= GB:
+		return fmt.Sprintf("%.2f GB", float64(b)/GB)
+	case b >= MB:
+		return fmt.Sprintf("%.1f MB", float64(b)/MB)
+	case b >= KB:
+		return fmt.Sprintf("%.0f KB", float64(b)/KB)
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
+}
+
+func orNA(s string) string {
+	if s == "" {
+		return "N/A"
+	}
+	return s
 }

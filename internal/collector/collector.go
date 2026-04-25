@@ -43,30 +43,35 @@ type Collector struct {
 	lanIface     string
 	db           *DevDB
 
-	mu       sync.RWMutex
-	current  Snapshot
-	lastCPU  CPUSample
-	lastNet  IfaceSample
-	lastAt   time.Time
+	mu      sync.RWMutex
+	current Snapshot
+	lastCPU CPUSample
+	lastNet IfaceSample
+	lastAt  time.Time
 
 	// state for event detection
-	prevDevices    map[string]Device // MAC → device
-	prevWANIPs     map[string]string // iface → IP
-	prevIfaceState map[string]string // iface → state
-	cpuHighSince   time.Time
-	prevUptime     time.Duration
+	prevDevices      map[string]Device // MAC → device
+	prevWANIPs       map[string]string // iface → IP
+	prevIfaceState   map[string]string // iface → state
+	cpuHighSince     time.Time
+	memHighSince     time.Time
+	prevUptime       time.Duration
+	watchedServices  []string
+	prevServiceState map[string]bool // service name → was running
 }
 
-func New(fastInterval, slowInterval time.Duration, bus *events.Bus, lanIface string, db *DevDB) *Collector {
+func New(fastInterval, slowInterval time.Duration, bus *events.Bus, lanIface string, db *DevDB, watchedServices []string) *Collector {
 	return &Collector{
-		fastInterval:   fastInterval,
-		slowInterval:   slowInterval,
-		bus:            bus,
-		lanIface:       lanIface,
-		db:             db,
-		prevDevices:    make(map[string]Device),
-		prevWANIPs:     make(map[string]string),
-		prevIfaceState: make(map[string]string),
+		fastInterval:     fastInterval,
+		slowInterval:     slowInterval,
+		bus:              bus,
+		lanIface:         lanIface,
+		db:               db,
+		prevDevices:      make(map[string]Device),
+		prevWANIPs:       make(map[string]string),
+		prevIfaceState:   make(map[string]string),
+		watchedServices:  watchedServices,
+		prevServiceState: make(map[string]bool),
 	}
 }
 
@@ -175,6 +180,7 @@ func (c *Collector) collectSlow() {
 	c.detectWANIPChanges(addrs)
 	c.detectIfaceChanges(ifaces)
 	c.detectReboot(uptime)
+	c.detectServiceChanges()
 }
 
 // ── event detection ───────────────────────────────────────────────────────────
@@ -201,15 +207,23 @@ func (c *Collector) detectCPUAlert(pct float64) {
 }
 
 func (c *Collector) detectMemAlert(m MemInfo) {
-	if m.UsedPct() >= 90 {
-		c.bus.Publish(events.Event{
-			Type: events.EvHighMemory,
-			Payload: events.MemPayload{
-				Percent: m.UsedPct(),
-				FreeMB:  int(m.Free / 1024),
-			},
-			At: time.Now(),
-		})
+	const threshold = 90.0
+	if m.UsedPct() >= threshold {
+		if c.memHighSince.IsZero() {
+			c.memHighSince = time.Now()
+		} else if time.Since(c.memHighSince) >= 60*time.Second {
+			c.bus.Publish(events.Event{
+				Type: events.EvHighMemory,
+				Payload: events.MemPayload{
+					Percent: m.UsedPct(),
+					FreeMB:  int(m.Free / 1024),
+				},
+				At: time.Now(),
+			})
+			c.memHighSince = time.Now()
+		}
+	} else {
+		c.memHighSince = time.Time{}
 	}
 }
 
@@ -292,6 +306,32 @@ func (c *Collector) detectReboot(uptime time.Duration) {
 	if prev > 5*time.Minute && uptime < 2*time.Minute {
 		c.bus.Publish(events.Event{Type: events.EvRebootDetected, At: time.Now()})
 	}
+}
+
+func (c *Collector) detectServiceChanges() {
+	for _, svc := range c.watchedServices {
+		running := isServiceRunning(svc)
+		prev, known := c.prevServiceState[svc]
+		if known && prev != running {
+			evType := events.EvServiceDown
+			if running {
+				evType = events.EvServiceUp
+			}
+			c.bus.Publish(events.Event{
+				Type:    evType,
+				Payload: events.ServicePayload{Name: svc},
+				At:      time.Now(),
+			})
+		}
+		c.prevServiceState[svc] = running
+	}
+}
+
+// isServiceRunning checks if an OpenWrt init.d service is currently running.
+// Relies on procd exit code: 0 = running, non-0 = stopped/unknown.
+func isServiceRunning(name string) bool {
+	_, _, err := runCmdWithTimeout(3*time.Second, "/etc/init.d/"+name, "status")
+	return err == nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

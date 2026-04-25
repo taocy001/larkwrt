@@ -17,6 +17,8 @@ lan_iface = "br-lan"
 collect_interval_fast = "5s"
 # 慢速指标采集间隔（设备列表/路由表）
 collect_interval_slow = "30s"
+# 需要监控崩溃/恢复的服务（宕机时自动告警）
+# watched_services = ["dnsmasq", "uhttpd", "openvpn"]
 
 [alert]
 cpu_threshold_pct    = 85   # CPU 告警阈值（百分比）
@@ -29,8 +31,44 @@ cooldown_secs        = 300  # 同类告警最短间隔（秒）
 cmd_rate_limit = 20
 # /exec 命令白名单（其余命令拒绝执行）
 exec_whitelist = ["ping", "ping6", "traceroute", "nslookup", "logread", "cat"]
+# /service 命令可操作的服务白名单（扩充自定义插件时在此添加）
+# service_whitelist = ["dnsmasq", "firewall", "network", "uhttpd", "dropbear", "openvpn", "wireguard"]
 
 # 设备自定义名称（MAC 地址小写 → 昵称）
 # [devices]
 # "aa:bb:cc:dd:ee:ff" = "我的NAS"
 # "11:22:33:44:55:66" = "iPhone"
+
+# ── 插件管理（仅检测到已安装的插件才会在飞书端出现）────────────────────────────
+#
+# sing-box 示例（使用原生 REST API，可查看代理组、连接数、流量，支持切换节点）
+# [[plugins]]
+# name        = "sing-box"
+# type        = "singbox"            # 启用 sing-box API 适配器
+# detect      = "/usr/bin/sing-box"  # 检测安装的文件路径
+# config_file = "/etc/sing-box/config.json"
+# reload_cmd  = "/etc/init.d/sing-box restart"
+# api_url     = "http://127.0.0.1:9090"   # sing-box 的 experimental.clash_api.external_controller
+# # api_secret  = "your-secret-token"     # 如配置了 secret 则填写
+#
+# frp 示例（通用插件，通过自定义命令获取状态和指标）
+# [[plugins]]
+# name        = "frp"
+# detect      = "/usr/bin/frpc"
+# config_file = "/etc/frp/frpc.ini"
+# status_cmd  = "pgrep -a frpc"
+# reload_cmd  = "/etc/init.d/frpc restart"
+# [[plugins.stats]]
+# label = "隧道数量"
+# cmd   = "pgrep frpc | wc -l"
+#
+# AdGuard Home 示例
+# [[plugins]]
+# name        = "adguardhome"
+# detect      = "/usr/bin/AdGuardHome"
+# config_file = "/etc/AdGuardHome/AdGuardHome.yaml"
+# status_cmd  = "pgrep -a AdGuardHome"
+# reload_cmd  = "/etc/init.d/adguardhome restart"
+# [[plugins.stats]]
+# label = "运行状态"
+# cmd   = "pgrep AdGuardHome > /dev/null && echo 运行中 || echo 已停止"

@@ -181,32 +181,70 @@ func HandleNote(ctx Context, args []string) {
 	}
 }
 
+func HandlePackages(ctx Context, args []string) {
+	filter := ""
+	if len(args) > 0 {
+		filter = strings.ToLower(args[0])
+	}
+	out, _, err := executor.RunUnchecked(10*time.Second, "opkg", "list-installed")
+	if err != nil {
+		ctx.Client.ReplyText(ctx.MessageID, "opkg 查询失败（请确认已安装 opkg）")
+		return
+	}
+	card := feishu.BuildPackageListCard(ctx.Config.Router.Name, out, filter)
+	if _, err := ctx.Client.ReplyCard(ctx.MessageID, card); err != nil {
+		log.Error().Err(err).Msg("send packages card")
+		ctx.Client.ReplyText(ctx.MessageID, "📦 已安装包\n\n"+truncateLog(out, 3000))
+	}
+}
+
+func HandleServices(ctx Context, _ []string) {
+	initdOut, _, _ := executor.RunUnchecked(5*time.Second, "ls", "/etc/init.d/")
+	rcdOut, _, _ := executor.RunUnchecked(5*time.Second, "ls", "/etc/rc.d/")
+	card := feishu.BuildServiceListCard(ctx.Config.Router.Name, initdOut, rcdOut)
+	if _, err := ctx.Client.ReplyCard(ctx.MessageID, card); err != nil {
+		log.Error().Err(err).Msg("send services card")
+		ctx.Client.ReplyText(ctx.MessageID, "获取服务列表失败")
+	}
+}
+
 func HandleHelp(ctx Context, _ []string) {
 	help := `**🛠 OpenWrt 管理命令**
 
 **查询**
-/status (s)       状态概览
-/devices (d)      已连接设备（含厂商识别）
-/traffic (t)      实时流量
-/wifi             无线网络信息
-/top [n]          进程列表（默认15行）
-/disk             磁盘使用
-/log [n]          最近 n 条日志（默认20）
-/ping <host>      连通性测试
-/dns <domain>     DNS 查询
-/route            路由表
-/arp              ARP 邻居表
+/status (s)            状态概览
+/devices (d)           已连接设备（含厂商识别）
+/traffic (t)           实时流量
+/wifi                  无线网络信息
+/top [n]               进程列表（默认15行）
+/disk                  磁盘使用
+/log [n]               最近 n 条日志（默认20）
+/ping <host>           连通性测试
+/dns <domain>          DNS 查询
+/route                 路由表
+/arp                   ARP 邻居表
+/services (svc)        服务列表（含自启动状态）
+/pkg [keyword]         已安装 opkg 包
 
 **设备管理**
-/note <MAC|IP> <备注>   添加设备备注（- 清除）
+/note <MAC|IP> <备注>  添加设备备注（- 清除）
+
+**插件管理（需已在配置中定义）**
+/plugin list (pl)      已安装插件列表
+/plugin <name>         插件状态（sing-box 展示代理组）
+/plugin config <name>  查看插件配置文件
+/plugin reload <name>  重载插件（需确认）
+/plugin switch <name> <group> <node>
+                       切换 sing-box 代理节点（需确认）
 
 **操作（需二次确认）**
-/reboot           重启路由器
-/reconnect        重拨 WAN
-/wifi on|off      开关无线
-/service <name>   重启服务（如 dnsmasq）
-/exec <cmd>       执行白名单命令
-/fw allow|block <ip>  防火墙规则`
+/reboot                重启路由器
+/reconnect             重拨 WAN
+/wifi on|off           开关无线
+/service <name> [start|stop|restart|status]
+                       管理服务（status 无需确认）
+/exec <cmd>            执行白名单命令
+/fw allow|block <ip>   防火墙规则`
 
 	ctx.Client.ReplyText(ctx.MessageID, help)
 }

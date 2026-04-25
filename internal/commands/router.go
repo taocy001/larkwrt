@@ -2,6 +2,8 @@ package commands
 
 import (
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,9 +33,10 @@ type Handler func(ctx Context, args []string)
 
 // Router parses incoming Feishu messages and dispatches to registered handlers.
 type Router struct {
-	cfg     *config.Config
-	limiter *limiter
-	handlers map[string]Handler
+	cfg       *config.Config
+	limiter   *limiter
+	handlers  map[string]Handler
+	startedAt time.Time // process start time; used to reject pre-startup Feishu replays
 
 	// pending confirmations: token → PendingAction
 	pendingMu sync.Mutex
@@ -65,6 +68,7 @@ func NewRouter(cfg *config.Config) *Router {
 		handlers:   make(map[string]Handler),
 		pending:    make(map[string]*PendingAction),
 		seenMsgIDs: make(map[string]time.Time),
+		startedAt:  time.Now(),
 	}
 	r.registerAll()
 	return r
@@ -90,6 +94,20 @@ func (r *Router) HandleMessage(env feishu.EventEnvelope, ctx Context) {
 	}
 	ctx.SenderID = senderID
 	ctx.MessageID = ev.Message.MessageID
+
+	if ts, err := strconv.ParseInt(ev.Message.CreateTime, 10, 64); err == nil {
+		msgTime := time.UnixMilli(ts)
+		// Reject messages sent before this process started (5s grace covers procd restart delay).
+		// This prevents Feishu from re-delivering pre-restart commands to a freshly started agent.
+		if msgTime.Before(r.startedAt.Add(-5 * time.Second)) {
+			log.Warn().Str("msg_id", ev.Message.MessageID).Msg("pre-startup message dropped")
+			return
+		}
+		if age := time.Since(msgTime); age > 60*time.Second {
+			log.Warn().Str("msg_id", ev.Message.MessageID).Dur("age", age).Msg("stale message dropped")
+			return
+		}
+	}
 
 	if r.isDuplicateMsg(ev.Message.MessageID) {
 		log.Warn().Str("msg_id", ev.Message.MessageID).Msg("duplicate message dropped")
@@ -274,6 +292,12 @@ func (r *Router) registerAll() {
 	r.handlers["arp"] = HandleARP
 	r.handlers["help"] = HandleHelp
 	r.handlers["note"] = HandleNote
+	r.handlers["services"] = HandleServices
+	r.handlers["svc"] = HandleServices
+	r.handlers["pkg"] = HandlePackages
+	r.handlers["packages"] = HandlePackages
+	r.handlers["plugin"] = r.handlePlugin
+	r.handlers["pl"] = r.handlePlugin
 
 	// wifi: read if no args, control if args provided
 	r.handlers["wifi"] = func(ctx Context, args []string) {
@@ -291,10 +315,39 @@ func (r *Router) registerAll() {
 		r.initiateConfirm(ctx, "重启路由器", doReboot)
 	}
 	r.handlers["service"] = func(ctx Context, args []string) {
-		label := "重启服务: " + strings.Join(args, " ")
-		r.initiateConfirm(ctx, label, func() (string, error) {
-			return doServiceRestart(args)
-		})
+		if len(args) == 0 {
+			ctx.Client.ReplyText(ctx.MessageID, "用法: /service <name> [start|stop|restart|status]")
+			return
+		}
+		name := args[0]
+		action := "restart"
+		if len(args) >= 2 {
+			action = strings.ToLower(args[1])
+		}
+		switch action {
+		case "status":
+			if !isValidServiceName(name) {
+				ctx.Client.ReplyText(ctx.MessageID, fmt.Sprintf("无效的服务名: %q", name))
+				return
+			}
+			out, errOut, err := executor.RunUnchecked(5*time.Second, "/etc/init.d/"+name, "status")
+			if err != nil {
+				ctx.Client.ReplyText(ctx.MessageID, fmt.Sprintf("🔧 **%s** 未运行\n%s", name, errOut))
+				return
+			}
+			if out == "" {
+				out = "running"
+			}
+			ctx.Client.ReplyText(ctx.MessageID, fmt.Sprintf("🔧 服务 **%s** 状态\n\n%s", name, out))
+		case "start", "stop", "restart":
+			actionNames := map[string]string{"start": "启动", "stop": "停止", "restart": "重启"}
+			label := fmt.Sprintf("%s服务: %s", actionNames[action], name)
+			r.initiateConfirm(ctx, label, func() (string, error) {
+				return doServiceControl(name, action, ctx.Config.Security.ServiceWhitelist)
+			})
+		default:
+			ctx.Client.ReplyText(ctx.MessageID, "操作必须为 start / stop / restart / status")
+		}
 	}
 	r.handlers["reconnect"] = func(ctx Context, args []string) {
 		r.initiateConfirm(ctx, "重拨 WAN", doReconnectWAN)

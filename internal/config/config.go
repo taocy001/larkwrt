@@ -14,7 +14,27 @@ type Config struct {
 	Monitor  MonitorConfig     `toml:"monitor"`
 	Alert    AlertConfig       `toml:"alert"`
 	Security SecurityConfig    `toml:"security"`
-	Devices  map[string]string `toml:"devices"` // MAC (lowercase) → friendly name
+	Devices  map[string]string `toml:"devices"`  // MAC (lowercase) → friendly name
+	Plugins  []PluginConfig    `toml:"plugins"`  // optional plugin profiles
+}
+
+// PluginConfig describes how to detect, query, and manage one OpenWrt plugin.
+type PluginConfig struct {
+	Name       string          `toml:"name"`
+	Type       string          `toml:"type"`        // "" (generic) | "singbox"
+	Detect     string          `toml:"detect"`      // file/binary path to check install
+	ConfigFile string          `toml:"config_file"`
+	StatusCmd  string          `toml:"status_cmd"`  // shell command for generic status
+	ReloadCmd  string          `toml:"reload_cmd"`  // shell command for reload/restart
+	Stats      []PluginStatDef `toml:"stats"`       // named metric commands
+	APIURL     string          `toml:"api_url"`     // REST API base URL (singbox)
+	APISecret  string          `toml:"api_secret"`  // Bearer token for API auth
+}
+
+// PluginStatDef is one named metric scraped via a shell command.
+type PluginStatDef struct {
+	Label string `toml:"label"`
+	Cmd   string `toml:"cmd"`
 }
 
 type FeishuConfig struct {
@@ -30,20 +50,22 @@ type RouterConfig struct {
 }
 
 type MonitorConfig struct {
-	CollectFast duration `toml:"collect_interval_fast"`
-	CollectSlow duration `toml:"collect_interval_slow"`
+	CollectFast     duration `toml:"collect_interval_fast"`
+	CollectSlow     duration `toml:"collect_interval_slow"`
+	WatchedServices []string `toml:"watched_services"` // services to alert on crash/recovery
 }
 
 type AlertConfig struct {
-	CPUThresholdPct    int `toml:"cpu_threshold_pct"`
-	CPUDurationSecs    int `toml:"cpu_duration_secs"`
-	MemThresholdPct    int `toml:"memory_threshold_pct"`
-	CooldownSecs       int `toml:"cooldown_secs"`
+	CPUThresholdPct int `toml:"cpu_threshold_pct"`
+	CPUDurationSecs int `toml:"cpu_duration_secs"`
+	MemThresholdPct int `toml:"memory_threshold_pct"`
+	CooldownSecs    int `toml:"cooldown_secs"`
 }
 
 type SecurityConfig struct {
-	CmdRateLimit  int      `toml:"cmd_rate_limit"`
-	ExecWhitelist []string `toml:"exec_whitelist"`
+	CmdRateLimit     int      `toml:"cmd_rate_limit"`
+	ExecWhitelist    []string `toml:"exec_whitelist"`
+	ServiceWhitelist []string `toml:"service_whitelist"` // services allowed for start/stop/restart
 }
 
 // duration is a TOML-friendly wrapper for time.Duration.
@@ -86,6 +108,10 @@ func setDefaults(c *Config) {
 	c.Alert.CooldownSecs = 300
 	c.Security.CmdRateLimit = 20
 	c.Security.ExecWhitelist = []string{"ping", "ping6", "traceroute", "nslookup", "logread"}
+	c.Security.ServiceWhitelist = []string{
+		"dnsmasq", "firewall", "network", "uhttpd",
+		"dropbear", "syslog", "ntpd", "openvpn", "wireguard",
+	}
 }
 
 func validate(c *Config) error {

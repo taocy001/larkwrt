@@ -107,35 +107,42 @@ func doFirewall(args []string) (string, error) {
 	}
 }
 
-// ── Service restart ───────────────────────────────────────────────────────────
+// ── Service control ───────────────────────────────────────────────────────────
 
-var allowedServices = map[string]struct{}{
-	"dnsmasq":    {},
-	"firewall":   {},
-	"network":    {},
-	"uhttpd":     {},
-	"dropbear":   {},
-	"syslog":     {},
-	"ntpd":       {},
-	"openvpn":    {},
-	"wireguard":  {},
+// isValidServiceName rejects names with path separators or shell metacharacters.
+func isValidServiceName(name string) bool {
+	if len(name) == 0 || len(name) > 64 {
+		return false
+	}
+	for _, c := range name {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 
-func doServiceRestart(args []string) (string, error) {
-	if len(args) != 1 {
-		return "", fmt.Errorf("用法: /service <名称>，如 /service dnsmasq")
+func doServiceControl(name, action string, whitelist []string) (string, error) {
+	if !isValidServiceName(name) {
+		return "", fmt.Errorf("无效的服务名: %q", name)
 	}
-	name := args[0]
-	if _, ok := allowedServices[name]; !ok {
-		return "", fmt.Errorf("服务 %q 不在允许列表中", name)
+	allowed := false
+	for _, w := range whitelist {
+		if w == name {
+			allowed = true
+			break
+		}
 	}
-
-	out, errOut, err := executor.RunUnchecked(30*time.Second, "/etc/init.d/"+name, "restart")
+	if !allowed {
+		return "", fmt.Errorf("服务 %q 不在允许列表中，请在 security.service_whitelist 中添加", name)
+	}
+	out, errOut, err := executor.RunUnchecked(30*time.Second, "/etc/init.d/"+name, action)
 	if err != nil {
 		return errOut, err
 	}
 	if out == "" {
-		out = fmt.Sprintf("服务 %s 重启成功", name)
+		out = fmt.Sprintf("服务 %s %s 成功", name, action)
 	}
 	return out, nil
 }
