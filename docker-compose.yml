@@ -1,0 +1,50 @@
+services:
+
+  # ── Run all tests ───────────────────────────────────────────────────────────
+  test:
+    build:
+      context: .
+      target: test
+    volumes:
+      # Mount coverage output to host so CI can pick it up
+      - ./coverage:/tmp
+    environment:
+      - GOFLAGS=-mod=readonly
+    # Exit code is propagated: 0 = pass, non-zero = fail
+
+  # ── Unit tests only (fast, no integration) ──────────────────────────────────
+  unit-test:
+    build:
+      context: .
+      target: test
+    command:
+      - go
+      - test
+      - -v
+      - -count=1
+      - -timeout=30s
+      - -coverprofile=/tmp/coverage-unit.out
+      - ./internal/...
+    volumes:
+      - ./coverage:/tmp
+
+  # ── Cross-compile all architectures ─────────────────────────────────────────
+  build:
+    build:
+      context: .
+      target: builder
+      args:
+        VERSION: "${VERSION:-dev}"
+    # Copy binaries out of the image
+    volumes:
+      - ./dist:/dist
+    command: cp -r /dist/. /dist/
+
+  # ── Show binary sizes ────────────────────────────────────────────────────────
+  sizes:
+    build:
+      context: .
+      target: builder
+    command: ls -lh /dist/
+    profiles:
+      - debug

@@ -1,0 +1,36 @@
+[feishu]
+app_id     = "cli_xxxxxxxxxxxxxxxx"
+app_secret = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# 推送目标群聊 chat_id（oc_ 开头）
+chat_id    = "oc_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# 管理员飞书 user_id 或 open_id（ou_ 开头），可执行重启等写操作
+admin_users = ["ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"]
+
+[router]
+# 在飞书消息中展示的路由器名称
+name = "OpenWrt"
+# LAN 桥接接口名（用于设备发现），默认 br-lan
+lan_iface = "br-lan"
+
+[monitor]
+# 快速指标采集间隔（CPU/流量速率）
+collect_interval_fast = "5s"
+# 慢速指标采集间隔（设备列表/路由表）
+collect_interval_slow = "30s"
+
+[alert]
+cpu_threshold_pct    = 85   # CPU 告警阈值（百分比）
+cpu_duration_secs    = 60   # 持续超阈值多少秒才告警
+memory_threshold_pct = 90   # 内存告警阈值（百分比）
+cooldown_secs        = 300  # 同类告警最短间隔（秒）
+
+[security]
+# 每用户每分钟最多发送的命令数
+cmd_rate_limit = 20
+# /exec 命令白名单（其余命令拒绝执行）
+exec_whitelist = ["ping", "ping6", "traceroute", "nslookup", "logread", "cat"]
+
+# 设备自定义名称（MAC 地址小写 → 昵称）
+# [devices]
+# "aa:bb:cc:dd:ee:ff" = "我的NAS"
+# "11:22:33:44:55:66" = "iPhone"

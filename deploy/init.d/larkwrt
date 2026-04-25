@@ -1,0 +1,32 @@
+#!/bin/sh /etc/rc.common
+# larkwrt procd init script
+
+START=99
+STOP=10
+USE_PROCD=1
+
+PROG=/usr/bin/larkwrt-agent
+CONFIG=/etc/larkwrt/config.toml
+
+start_service() {
+    [ -f "$PROG" ] || { logger -t larkwrt "binary not found: $PROG"; return 1; }
+    [ -f "$CONFIG" ] || { logger -t larkwrt "config not found: $CONFIG"; return 1; }
+
+    procd_open_instance
+    procd_set_param command "$PROG" -config "$CONFIG"
+    # respawn threshold=30s timeout=5s retry=5: stop retrying after 5 quick crashes
+    procd_set_param respawn 30 5 5
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_set_param pidfile /var/run/larkwrt.pid
+    procd_close_instance
+}
+
+stop_service() {
+    rm -f /var/run/larkwrt.pid
+}
+
+reload_service() {
+    stop
+    start
+}

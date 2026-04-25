@@ -1,0 +1,27 @@
+# Build artifacts
+dist/
+dist_tmp/
+larkwrt-agent
+larkwrt-agent*
+
+# Credentials and local config — never commit
+config.toml
+*.local
+
+# Device database contains home network info
+devices.json
+
+# Test output
+coverage/
+*.out
+*.test
+
+# Claude Code local settings (may contain SSH hosts and permissions)
+.claude/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
